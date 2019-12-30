@@ -106,8 +106,20 @@ jobs:
             # mael.xyz:22 SSH-2.0-OpenSSH_7.6p1 Ubuntu-4ubuntu0.3
             mael.xyz ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIC1Dldc3fzjvaUbZAbAKb61QNl/dVUO+sCxZJwDkbxyv
             EOM
-            git remote add dokku dokku@${DOKKU_BASE_DOMAIN}:$APP_NAME
-            git push dokku master
+            # git remote add dokku dokku@${DOKKU_BASE_DOMAIN}:$APP_NAME
+            # git push dokku master
+      - run:
+          name: Beta Deploy Build
+          command: |
+            docker build -t "dokku/$(partial=${CIRCLE_PROJECT_REPONAME/.$DOKKU_BASE_DOMAIN/''}:latest" .
+      - run:
+          name: Beta Deploy Save
+          command: |
+            docker save "dokku/$(partial=${CIRCLE_PROJECT_REPONAME/.$DOKKU_BASE_DOMAIN/''}:latest" | bzip2 | ssh $CIRCLE_PROJECT_REPONAME "bunzip2 | docker load"
+      - run:
+          name: Beta Deploy SSH
+          command: |
+            ssh "root:$DOKKU_BASE_DOMAIN" "dokku tags:create $(partial=${CIRCLE_PROJECT_REPONAME/.$DOKKU_BASE_DOMAIN/''} previous; dokku tags:deploy $(partial=${CIRCLE_PROJECT_REPONAME/.$DOKKU_BASE_DOMAIN/''} latest"
       - run:
           name: Post deploy notification
           command: |
