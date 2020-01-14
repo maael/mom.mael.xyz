@@ -3,28 +3,27 @@ version: 2.1
 orbs:
   doctl: digitalocean/cli@0.1.1
 
-jobs:
-  all:
-    docker:
-      - image: circleci/node:10.17
-    working_directory: ~/repo
+commands:
+  setup:
+    description: Basic steps to install packages, lint, prettier, and build
     steps:
       - checkout
+      - run:
+          name: Get App Name
+          command: |
+            echo 'export APP_NAME="$(partial=${CIRCLE_PROJECT_REPONAME/.$DOKKU_BASE_DOMAIN/''} && echo ${partial/$DOKKU_BASE_DOMAIN/'main'})"' >> $BASH_ENV
+            echo "Found app name: $(partial=${CIRCLE_PROJECT_REPONAME/.$DOKKU_BASE_DOMAIN/''} && echo ${partial/$DOKKU_BASE_DOMAIN/'main'})"
       - run:
           name: Versions
           command: |
             echo "Yarn: $(yarn -v)" && echo "Node: $(node -v)" && echo "NPM: $(npm -v)"
       - restore_cache:
           keys:
-            - v1-dependencies-{{ checksum "yarn.lock" }}
-            - v1-dependencies-
+            - v3-dependencies-{{ checksum "yarn.lock" }}
+            - v3-dependencies-
       - run:
           name: Install
           command: yarn install
-      - save_cache:
-          paths:
-            - node_modules
-          key: v1-dependencies-{{ checksum "yarn.lock" }}
       - run:
           name: Lint
           command: yarn lint
@@ -34,6 +33,30 @@ jobs:
       - run:
           name: Build
           command: yarn build
+      - save_cache:
+          paths:
+            - ./node_modules
+            - ./.next/cache
+          key: v3-dependencies-{{ checksum "yarn.lock" }}
+  failure_notification:
+    description: Send SMS on failure
+    steps:
+      - run:
+          name: Send Notification
+          command: |
+            curl -X POST -d "Body=Hi, $CIRCLE_PROJECT_REPONAME just failed to deploy. The commit was \"$(git log --format="%s%b" -n 1 $CIRCLE_SHA1)\" See $CIRCLE_BUILD_URL for the build." \
+              -d "From=CountDokku" -d "To=$NOTIFICATION_NUMBER_TO" \
+              "https://api.twilio.com/2010-04-01/Accounts/$TWILIO_SID/Messages" \
+              -u "$TWILIO_SID:$TWILIO_AUTH_TOKEN" || 0
+          when: on_fail
+
+jobs:
+  all:
+    docker:
+      - image: circleci/node:10.17
+    working_directory: ~/repo
+    steps:
+      - setup
       - run:
           name: Test
           command: yarn test
@@ -43,90 +66,22 @@ jobs:
       - image: circleci/node:10.17
     working_directory: ~/repo
     steps:
-      - checkout
-      - run:
-          name: Get App Name
-          command: |
-            echo 'export APP_NAME="$(partial=${CIRCLE_PROJECT_REPONAME/.$DOKKU_BASE_DOMAIN/''} && echo ${partial/$DOKKU_BASE_DOMAIN/'main'})"' >> $BASH_ENV
-            echo "Found app name: $(partial=${CIRCLE_PROJECT_REPONAME/.$DOKKU_BASE_DOMAIN/''} && echo ${partial/$DOKKU_BASE_DOMAIN/'main'})"
-      - run:
-          name: Versions
-          command: |
-            echo "Yarn: $(yarn -v)" && echo "Node: $(node -v)" && echo "NPM: $(npm -v)"
-      - restore_cache:
-          keys:
-            - v1-dependencies-{{ checksum "yarn.lock" }}
-            - v1-dependencies-
-      - run:
-          name: Install
-          command: yarn install
-      - save_cache:
-          paths:
-            - node_modules
-          key: v1-dependencies-{{ checksum "yarn.lock" }}
-      - run:
-          name: Lint
-          command: yarn lint
-      - run:
-          name: Prettier
-          command: yarn prettier:check
+      - setup
       - run:
           name: Test
           command: yarn test
+      - run:
+          command: npx now --token $NOW_TOKEN
 
-  deploy:
+  now-deploy:
     docker:
       - image: circleci/node:10.17
     working_directory: ~/repo
     steps:
       - checkout
       - run:
-          name: Get App Name
-          command: |
-            echo 'export APP_NAME="$(partial=${CIRCLE_PROJECT_REPONAME/.$DOKKU_BASE_DOMAIN/''} && echo ${partial/$DOKKU_BASE_DOMAIN/'main'})"' >> $BASH_ENV
-            echo "Found app name: $(partial=${CIRCLE_PROJECT_REPONAME/.$DOKKU_BASE_DOMAIN/''} && echo ${partial/$DOKKU_BASE_DOMAIN/'main'})"
-      - doctl/install
-      - run:
-          name: Ensure DigitalOcean A record
-          command: |
-            echo "Creating A record: $APP_NAME ($CIRCLE_PROJECT_REPONAME)"
-            if doctl compute domain records list $DOKKU_BASE_DOMAIN | grep "$CIRCLE_PROJECT_REPONAME"; \
-            then echo "${APP_NAME}.${DOKKU_BASE_DOMAIN} already exists, skipping"; \
-            else doctl compute domain records create ${DOKKU_BASE_DOMAIN} --record-type A --record-name ${APP_NAME} --record-data ${DOKKU_DROPLET_IP}; \
-            fi
-      - run:
-          name: Dokku Deploy
-          command: |
-            echo "Deploying: $APP_NAME"
-            cat >> ~/.ssh/known_hosts \<<- EOM
-            # mael.xyz:22 SSH-2.0-OpenSSH_7.6p1 Ubuntu-4ubuntu0.3
-            mael.xyz ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABAQDQq1o8g6bAk16oSV4U6OUh/0YNl1Sv+PpSjBb+0G5NHb5AGlCme0dgdu/lRyYk+U5LzhUOOxRcx8CTHfvpkgsmorOdwFGlNF/+2iokEEpSDN/+N4DUtdnxXbGxGQyy+aTEcXNVDpF5sysUSsKW1R+V4Ncl+jBd0ZunARsqSueUdDXqo8oQ2QInNcMMRAM970tGZinQFq0OOVko6gErXVot33VZVLHkhWH6sQvWIHDk1Zan3JqaJySX43JA/zRbgWVRvntLoxxb/wHNpsbGLK4RIGFsbwAYgT7v2GAHMNAR4Mm1SEV4addi0QuU4UX8/gF0ZA+9TX8aG+DlpAROOS2r
-            # mael.xyz:22 SSH-2.0-OpenSSH_7.6p1 Ubuntu-4ubuntu0.3
-            mael.xyz ecdsa-sha2-nistp256 AAAAE2VjZHNhLXNoYTItbmlzdHAyNTYAAAAIbmlzdHAyNTYAAABBBHDrz43V9MIQCwoMeKtzjZq3eZB0ZH7k/0qOrwriUPhAgMAUGSxq43K0v6GBTvhqXKLrOA/y0TUA1Q9kHOMQ3/k=
-            # mael.xyz:22 SSH-2.0-OpenSSH_7.6p1 Ubuntu-4ubuntu0.3
-            mael.xyz ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIC1Dldc3fzjvaUbZAbAKb61QNl/dVUO+sCxZJwDkbxyv
-            EOM
-            # git remote add dokku dokku@${DOKKU_BASE_DOMAIN}:$APP_NAME
-            # git push dokku master
-      - run:
-          name: Beta Deploy Build
-          command: |
-            docker build -t "dokku/$(partial=${CIRCLE_PROJECT_REPONAME/.$DOKKU_BASE_DOMAIN/''}:latest" .
-      - run:
-          name: Beta Deploy Save
-          command: |
-            docker save "dokku/$(partial=${CIRCLE_PROJECT_REPONAME/.$DOKKU_BASE_DOMAIN/''}:latest" | bzip2 | ssh $CIRCLE_PROJECT_REPONAME "bunzip2 | docker load"
-      - run:
-          name: Beta Deploy SSH
-          command: |
-            ssh "root:$DOKKU_BASE_DOMAIN" "dokku tags:create $(partial=${CIRCLE_PROJECT_REPONAME/.$DOKKU_BASE_DOMAIN/''} previous; dokku tags:deploy $(partial=${CIRCLE_PROJECT_REPONAME/.$DOKKU_BASE_DOMAIN/''} latest"
-      - run:
-          name: Post deploy notification
-          command: |
-            curl -X POST -d "Body=Hi, $CIRCLE_PROJECT_REPONAME was just deployed. The commit was \"$(git log --format="%s%b" -n 1 $CIRCLE_SHA1)\" See $CIRCLE_BUILD_URL for the build." \
-              -d "From=CountDokku" -d "To=$NOTIFICATION_NUMBER_TO" \
-              "https://api.twilio.com/2010-04-01/Accounts/$TWILIO_SID/Messages" \
-              -u "$TWILIO_SID:$TWILIO_AUTH_TOKEN" || 0
+          command: npx now --token $NOW_TOKEN  --prod
+      - failure_notification
 
 workflows:
   version: 2
@@ -155,8 +110,8 @@ workflows:
           filters:
             branches:
               only: master
-      - deploy:
-          name: deploy
+      - now-deploy:
+          name: now-deploy
           context: common-env-vars
           requires:
             - approve-deploy
