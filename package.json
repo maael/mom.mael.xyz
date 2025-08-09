@@ -5,17 +5,17 @@
   "license": "UNLICENSED",
   "scripts": {
     "dev": "next dev",
-    "start": "next start -- -p ${PORT:-3000}",
+    "build": "NODE_OPTIONS=--openssl-legacy-provider next build",
+    "start": "NODE_OPTIONS=--openssl-legacy-provider next start -- -p ${PORT:-3000}",
     "lint": "tslint -c tslint.js -p tsconfig.json",
     "prettier": "prettier --write './pages/**/*.{js,jsx,ts,tsx}'",
     "prettier:check": "prettier --list-different './pages/**/*.{js,jsx,ts,tsx}'",
-    "build": "next build",
     "test": "echo 'Todo'"
   },
   "engines": {
     "npm": "^6.11.3",
-    "node": "^14.0.0",
-    "yarn": "^1.19.1"
+    "node": "22.x",
+    "yarn": "^1.22.x"
   },
   "husky": {
     "hooks": {
